@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      0.0.14
-// @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
+// @version      0.0.16
+// @description  Pure Vanilla JS Interceptor for Torn Bookie to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
 // @match        https://www.torn.com/loader.php?sid=bookie*
@@ -12,41 +12,38 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @grant        unsafeWindow
-// @run-at       document-start
+// @connect      api.the-odds-api.com
+// @run-at       document-end
 // ==/UserScript==
 
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v0.0.14) at document-start...");
-
-    // Target the real page window context to catch page-level XHR/Fetch
-    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+    console.log("[EV Engine] Vanilla JS Engine initializing (v0.0.16)...");
 
     // ==============================================================================
-    // CONFIGURATION & STATE
+    // CONFIGURATION & PERSISTENCE
     // ==============================================================================
     
-    let getSafeValue = (key, def) => {
+    const getSafeValue = (key, def) => {
         try { return typeof GM_getValue === 'function' ? GM_getValue(key, def) : (window.localStorage.getItem(key) || def); } 
         catch (e) { return window.localStorage.getItem(key) || def; }
     };
     
-    let setSafeValue = (key, val) => {
+    const setSafeValue = (key, val) => {
         try { if (typeof GM_setValue === 'function') GM_setValue(key, val); else window.localStorage.setItem(key, val); }
         catch (e) { window.localStorage.setItem(key, val); }
     };
     
     let ODDS_API_KEY = getSafeValue('torn_ev_odds_api_key', '');
     if (!ODDS_API_KEY) {
-        ODDS_API_KEY = window.prompt("Torn Bookie EV Engine\n\nPlease enter your API key for The Odds API:\n(Get one at https://the-odds-api.com)");
+        ODDS_API_KEY = window.prompt("Torn Bookie EV Engine\n\nEnter key for The Odds API (https://the-odds-api.com):");
         if (ODDS_API_KEY && ODDS_API_KEY.trim() !== '') {
             setSafeValue('torn_ev_odds_api_key', ODDS_API_KEY.trim());
         }
     }
     
-    let userBankroll = 10000000; // 10m default
+    const userBankroll = 10000000;
 
     const injectStyles = () => {
         if (document.getElementById('ev-engine-styles')) return;
@@ -57,7 +54,7 @@
             display: inline-flex;
             align-items: center;
             padding: 2px 6px;
-            font-family: 'Inter', sans-serif;
+            font-family: 'Inter', -apple-system, sans-serif;
             font-weight: 800;
             font-size: 11px;
             text-transform: uppercase;
@@ -70,28 +67,31 @@
         .ev-positive { background-color: #10b981; color: #000; border-color: #10b981; }
         .ev-negative { background-color: transparent; color: #ef4444; border-color: #ef4444; opacity: 0.8; }
         
+        .ev-panel-wrapper {
+            display: block;
+            width: 100%;
+            clear: both;
+        }
         .ev-panel-container {
             background-color: #09090b;
             border: 1px solid #27272a;
-            padding: 12px;
-            margin-top: 8px;
-            font-family: 'Inter', sans-serif;
+            padding: 10px;
+            margin-top: 6px;
+            font-family: 'Inter', -apple-system, sans-serif;
             border-left: 3px solid #10b981;
-            width: 100%;
             box-sizing: border-box;
-            clear: both;
         }
         .ev-panel-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             border-bottom: 1px solid #27272a;
-            padding-bottom: 8px;
-            margin-bottom: 8px;
+            padding-bottom: 6px;
+            margin-bottom: 6px;
         }
         .ev-panel-title {
             font-weight: 900;
-            font-size: 12px;
+            font-size: 11px;
             color: #f4f4f5;
             text-transform: uppercase;
             letter-spacing: 0.05em;
@@ -99,14 +99,14 @@
         .ev-stats-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
+            gap: 6px;
         }
         .ev-stat-box {
             display: flex;
             flex-direction: column;
         }
         .ev-stat-label {
-            font-size: 10px;
+            font-size: 9px;
             color: #a1a1aa;
             text-transform: uppercase;
             font-weight: 600;
@@ -114,37 +114,28 @@
         .ev-stat-value {
             font-family: monospace;
             font-weight: 700;
-            font-size: 14px;
+            font-size: 13px;
             color: #f4f4f5;
         }
-        .ev-stat-value.highlight {
-            color: #10b981;
-        }
+        .ev-stat-value.highlight { color: #10b981; }
         .ev-kelly-suggest {
-            margin-top: 8px;
-            padding: 6px;
+            margin-top: 6px;
+            padding: 5px;
             background: #18181b;
             border: 1px dashed #3f3f46;
-            font-size: 11px;
+            font-size: 10px;
             color: #d4d4d8;
             font-family: monospace;
         }
-        .ev-kelly-amount {
-            color: #eab308;
-            font-weight: bold;
-        }
+        .ev-kelly-amount { color: #eab308; font-weight: bold; }
     `;
         (document.head || document.documentElement).appendChild(style);
     };
-    
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', injectStyles);
-    } else {
-        injectStyles();
-    }
+
+    injectStyles();
 
     // ==============================================================================
-    // CORE MATH ENGINE
+    // MATH ENGINE
     // ==============================================================================
 
     function calculateImpliedProbability(decimalOdds) {
@@ -153,9 +144,9 @@
     }
 
     function calculateEV(tornOdds, trueProbability) {
-        const potentialProfit = tornOdds - 1;
-        const lossProbability = 1 - trueProbability;
-        return ((trueProbability * potentialProfit) - (lossProbability * 1)) * 100;
+        const profit = tornOdds - 1;
+        const lossProb = 1 - trueProbability;
+        return ((trueProbability * profit) - lossProb) * 100;
     }
 
     function calculateKelly(tornOdds, trueProbability, fraction = 0.25) {
@@ -167,11 +158,40 @@
     }
 
     // ==============================================================================
-    // EXTERNAL API FETCHING
+    // API FETCHING
     // ==============================================================================
     
     let oddsCache = null;
     let cacheTimestamp = 0;
+
+    function makeGMRequest(url) {
+        return new Promise((resolve, reject) => {
+            if (typeof GM_xmlhttpRequest === 'function') {
+                GM_xmlhttpRequest({
+                    method: "GET",
+                    url: url,
+                    headers: { "Accept": "application/json" },
+                    onload: (res) => {
+                        if (res.status === 401 || res.status === 403) {
+                            setSafeValue('torn_ev_odds_api_key', '');
+                            reject(new Error(`HTTP ${res.status}`));
+                        } else if (res.status >= 200 && res.status < 300) {
+                            try { resolve(JSON.parse(res.responseText)); } 
+                            catch (e) { reject(e); }
+                        } else {
+                            reject(new Error(`HTTP ${res.status}`));
+                        }
+                    },
+                    onerror: (err) => reject(err)
+                });
+            } else {
+                fetch(url)
+                    .then(r => r.json())
+                    .then(resolve)
+                    .catch(reject);
+            }
+        });
+    }
 
     async function fetchRealWorldProbability(matchName, selectionName, tornOdds) {
         if (!ODDS_API_KEY) return calculateImpliedProbability(tornOdds);
@@ -179,23 +199,7 @@
         try {
             if (!oddsCache || Date.now() - cacheTimestamp > 300000) {
                 const url = `https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey=${ODDS_API_KEY}&regions=eu,uk&markets=h2h`;
-                
-                const fetchWithGM = () => new Promise((resolve, reject) => {
-                    if (typeof GM_xmlhttpRequest === 'undefined') reject("GM_xmlhttpRequest unavailable");
-                    GM_xmlhttpRequest({
-                        method: "GET",
-                        url: url,
-                        onload: (res) => res.status >= 200 && res.status < 300 ? resolve({ ok: true, json: async () => JSON.parse(res.responseText) }) : resolve({ ok: false, status: res.status }),
-                        onerror: (err) => reject(err)
-                    });
-                });
-
-                let response;
-                try { response = await fetchWithGM(); } 
-                catch (e) { response = await pageWindow.fetch(url); }
-
-                if (!response || !response.ok) return calculateImpliedProbability(tornOdds);
-                oddsCache = await response.json();
+                oddsCache = await makeGMRequest(url);
                 cacheTimestamp = Date.now();
             }
 
@@ -220,43 +224,16 @@
     }
 
     // ==============================================================================
-    // PAGE-LEVEL INTERCEPTION (FETCH & XHR)
-    // ==============================================================================
-    
-    const origFetch = pageWindow.fetch;
-    pageWindow.fetch = async function(...args) {
-        const response = await origFetch.apply(this, args);
-        const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
-        if (url.includes('bookie') || url.includes('step=getMatches')) {
-            setTimeout(processBetCards, 800);
-        }
-        return response;
-    };
-
-    const origOpen = pageWindow.XMLHttpRequest.prototype.open;
-    const origSend = pageWindow.XMLHttpRequest.prototype.send;
-    
-    pageWindow.XMLHttpRequest.prototype.open = function(...args) {
-        this._url = args[1];
-        return origOpen.apply(this, args);
-    };
-
-    pageWindow.XMLHttpRequest.prototype.send = function(...args) {
-        this.addEventListener('load', function() {
-            if (this._url && this._url.includes('bookie.php') && this._url.includes('step=getMatches')) {
-                setTimeout(processBetCards, 500);
-            }
-        });
-        return origSend.apply(this, args);
-    };
-
-    // ==============================================================================
-    // DOM MANIPULATION & UI INJECTION
+    // NATIVE DOM INJECTION
     // ==============================================================================
 
     async function injectEVPanel(targetEl, matchData, selectionData) {
-        if (targetEl.dataset.evInjected || targetEl.nextElementSibling?.classList.contains('ev-panel-container')) return;
-        targetEl.dataset.evInjected = 'true';
+        if (targetEl.getAttribute('data-ev-injected') === 'true') return;
+        
+        const parentContainer = targetEl.parentElement;
+        if (!parentContainer || parentContainer.querySelector('.ev-panel-container')) return;
+
+        targetEl.setAttribute('data-ev-injected', 'true');
 
         const tornOdds = selectionData.odds;
         const selectionName = selectionData.name;
@@ -277,6 +254,9 @@
 
         const kellyFraction = calculateKelly(tornOdds, trueProb, 0.25);
         const recommendedStake = userBankroll * kellyFraction;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'ev-panel-wrapper';
 
         const panel = document.createElement('div');
         panel.className = 'ev-panel-container';
@@ -308,58 +288,43 @@
             </div>
         `;
         
-        targetEl.insertAdjacentElement('afterend', panel);
+        wrapper.appendChild(panel);
+        parentContainer.insertAdjacentElement('afterend', wrapper);
     }
 
     // ==============================================================================
-    // DOM SCANNER & PARSER
+    // NATIVE DOM SCANNER
     // ==============================================================================
-    
-    function processBetCards() {
-        console.log("[EV Engine] Scanning for betting selections...");
-        
-        // Expanded target scope for modern React/Torn structures
-        const betCandidates = document.querySelectorAll(`
-            button, 
-            [role="button"], 
-            [class*="option_"], 
-            [class*="bet_"], 
-            [class*="outcome_"],
-            label[class*="bet"],
-            div[class*="bets"] > div
-        `);
-        
-        let found = 0;
 
-        betCandidates.forEach(el => {
-            if (el.dataset.evInjected || el.closest('.ev-panel-container') || el.closest('.ev-badge')) return;
+    function processBetCards() {
+        const candidates = document.querySelectorAll('button, a, [role="button"], label, div');
+
+        let count = 0;
+        candidates.forEach(el => {
+            if (el.getAttribute('data-ev-injected') === 'true' || el.closest('.ev-panel-container') || el.closest('.ev-badge')) return;
 
             const text = el.textContent.trim().replace(/\s+/g, ' ');
-            
-            // Look specifically for buttons that have odds formats at the end
-            const oddsMatch = text.match(/(?:(.+?)\s+)?(\d+(?:\.\d{1,2})?)$/);
-            
-            if (oddsMatch && !text.toLowerCase().includes('page') && !text.toLowerCase().includes('max')) {
-                const potentialOdds = parseFloat(oddsMatch[2]);
+            const matches = text.match(/\b([1-9]\d*(?:\.\d{1,2})?)\b/g);
+            if (!matches) return;
 
-                if (!isNaN(potentialOdds) && potentialOdds > 1.01 && potentialOdds < 500) {
-                    // Ignore input boxes or bet amount fields
-                    if (el.tagName === 'INPUT' || el.querySelector('input')) return;
+            const potentialOdds = parseFloat(matches[matches.length - 1]);
 
-                    const name = (oddsMatch[1] || "").trim() || "Selection";
-                    
-                    // Climb up DOM to isolate match context title
-                    const parentBlock = el.closest('[class*="match"], [class*="wrapper"], li');
-                    const titleEl = parentBlock ? parentBlock.querySelector('[class*="team"], [class*="title"], [class*="name"], h3, strong') : null;
-                    const matchTitle = titleEl ? titleEl.textContent.trim() : "Unknown Match";
+            if (!isNaN(potentialOdds) && potentialOdds > 1.01 && potentialOdds < 500) {
+                if (el.tagName === 'INPUT' || el.querySelector('input')) return;
 
-                    found++;
-                    injectEVPanel(el, { title: matchTitle }, { name: name, odds: potentialOdds });
-                }
+                const name = text.replace(potentialOdds.toString(), '').trim() || "Selection";
+                const parentBlock = el.closest('li, div');
+                const titleEl = parentBlock ? parentBlock.querySelector('h3, strong, span') : null;
+                const matchTitle = titleEl ? titleEl.textContent.trim() : "Unknown Match";
+
+                count++;
+                injectEVPanel(el, { title: matchTitle }, { name: name, odds: potentialOdds });
             }
         });
 
-        console.log(`[EV Engine] Scan finished. Injected ${found} bet buttons.`);
+        if (count > 0) {
+            console.log(`[EV Engine] Scan complete. Injected ${count} panels via Native DOM.`);
+        }
     }
 
     function injectStatusIndicator() {
@@ -367,7 +332,7 @@
         const status = document.createElement('div');
         status.id = 'ev-status-indicator';
         status.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#10b981;color:#000;padding:5px 10px;border-radius:4px;font-size:10px;font-family:monospace;z-index:9999;font-weight:bold;cursor:pointer;box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-        status.textContent = 'EV ENGINE v0.0.14 LIVE (Click to rescan)';
+        status.textContent = 'EV ENGINE v0.0.16 LIVE (Rescan)';
         status.onclick = () => processBetCards();
         document.body.appendChild(status);
     }
@@ -381,14 +346,8 @@
         }, 400);
     });
 
-    const checkInterval = setInterval(() => {
-        const bookieApp = document.querySelector('[class*="bookie"], #bookie-root, #mainContainer, .content-wrapper, [class*="content"]');
-        if (bookieApp && bookieApp.children.length > 0) {
-            clearInterval(checkInterval);
-            observer.observe(bookieApp, { childList: true, subtree: true });
-            setTimeout(processBetCards, 800);
-            injectStatusIndicator();
-        }
-    }, 800);
+    observer.observe(document.body, { childList: true, subtree: true });
+    setTimeout(processBetCards, 1000);
+    injectStatusIndicator();
 
 })();
