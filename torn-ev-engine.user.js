@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      0.0.8
+// @version      0.0.9
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -16,7 +16,7 @@
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v0.0.7) at document-start...");
+    console.log("[EV Engine] Script initializing (v0.0.9) at document-start...");
 
     // ==============================================================================
     // CONFIGURATION & STATE
@@ -224,12 +224,12 @@
     
     let latestMatchData = {};
 
-    XMLHttpRequest.prototype.open = function(method, url) {
-        this._url = url;
-        return originalOpen.apply(this, arguments);
+    XMLHttpRequest.prototype.open = function(...args) {
+        this._url = args[1]; // url is always the second argument in XHR.open
+        return originalOpen.apply(this, args);
     };
 
-    XMLHttpRequest.prototype.send = function() {
+    XMLHttpRequest.prototype.send = function(...args) {
         this.addEventListener('load', function() {
             // Intercept Bookie API calls
             if (this._url && this._url.includes('bookie.php') && this._url.includes('step=getMatches')) {
@@ -254,7 +254,7 @@
                 }
             }
         });
-        return originalSend.apply(this, arguments);
+        return originalSend.apply(this, args);
     };
 
     // ==============================================================================
@@ -386,13 +386,13 @@
     // Add a floating status indicator so the user knows it's loaded
     function injectStatusIndicator() {
         if (document.getElementById('ev-status-indicator')) {
-            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.7 LIVE (Click to rescan)';
+            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.9 LIVE (Click to rescan)';
             return;
         }
         const status = document.createElement('div');
         status.id = 'ev-status-indicator';
         status.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#10b981;color:#000;padding:5px 10px;border-radius:4px;font-size:10px;font-family:monospace;z-index:9999;font-weight:bold;cursor:pointer;box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-        status.textContent = 'EV ENGINE v0.0.7 LIVE (Click to rescan)';
+        status.textContent = 'EV ENGINE v0.0.9 LIVE (Click to rescan)';
         status.onclick = () => {
             console.log("[EV Engine] Manual rescan triggered.");
             processBetCards();
@@ -414,7 +414,7 @@
     // Wait for the main container to load, then observe it
     console.log("[EV Engine] Looking for Bookie app container...");
     const checkInterval = setInterval(() => {
-        const bookieApp = document.getElementById('bookie-root') || document.querySelector('.bookie-app') || document.body;
+        const bookieApp = document.getElementById('bookie-root') || document.querySelector('[class^="bookieWrap"]');
         if (bookieApp) {
             clearInterval(checkInterval);
             observer.observe(bookieApp, { childList: true, subtree: true });
