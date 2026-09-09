@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      0.0.7
+// @version      0.0.8
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -347,17 +347,20 @@
         allButtons.forEach(btn => {
             if (btn.dataset.evInjected || btn.closest('.ev-panel-container') || btn.closest('.ev-badge')) return;
             
-            const text = btn.textContent.trim();
+            // Extract raw text, replacing common inner tags or spacing issues
+            const text = btn.textContent.trim().replace(/\s+/g, ' ');
             
-            // Look for odds at the end of the text: "Team Name 1.50" or just "1.50"
-            const oddsMatch = text.match(/([\d.]+)$/);
+            // Regex explanation:
+            // Matches optional team name text, followed by an optional space, and ending with decimal odds.
+            // Example: "Team A 1.50" or "1.50" or "Draw 3.4"
+            const oddsMatch = text.match(/(?:(.+?)\s+)?(\d+\.\d{1,2})$/);
             
             // Usually betting odds buttons have some text and a number, and ignore generic 'bet' buttons
-            if (oddsMatch && text.length > oddsMatch[1].length && !text.toLowerCase().includes('bet') && !text.toLowerCase().includes('max')) {
-                const odds = parseFloat(oddsMatch[1]);
+            if (oddsMatch && !text.toLowerCase().includes('bet') && !text.toLowerCase().includes('max')) {
+                const odds = parseFloat(oddsMatch[2]);
                 
-                // Extract selection name from the button text
-                const name = text.replace(oddsMatch[1], '').trim() || "Selection";
+                // Extract selection name from the match group, fallback to "Selection"
+                const name = (oddsMatch[1] || "").trim() || "Selection";
                 
                 // Attempt to find a parent match block to get the Match Title
                 const parentBlock = btn.closest('[class^="matchWrap_"], [class*="matchContainer"], li');
