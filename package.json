@@ -1,0 +1,16 @@
+{
+  "name": "react-example",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npx serve -p 3000 .",
+    "build": "mkdir -p dist && cp torn-ev-engine.user.js dist/",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "echo 'No linting for raw user script'"
+  },
+  "dependencies": {
+    "serve": "^14.2.6"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Torn Bookie EV Engine",
+  "description": "Userscript generator and UI preview for Torn City Bookie Arbitrage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
