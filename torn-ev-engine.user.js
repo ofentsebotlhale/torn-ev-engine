@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      1.0.2
+// @version      1.0.3
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -12,13 +12,13 @@
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @run-at       document-end
+// @run-at       document-start
 // ==/UserScript==
 
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v1.0.2)...");
+    console.log("[EV Engine] Script initializing (v1.0.3) at document-start...");
 
     // ==============================================================================
     // CONFIGURATION & STATE
@@ -170,6 +170,50 @@
             }, 300);
         });
     }
+
+    // ==============================================================================
+    // XHR INTERCEPTION (RELIABLE REACT DATA CAPTURE)
+    // ==============================================================================
+    
+    // We intercept the raw JSON data Torn sends to the frontend, rather than
+    // fighting the React DOM which obfuscates classes and structures.
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalSend = XMLHttpRequest.prototype.send;
+    
+    let latestMatchData = {};
+
+    XMLHttpRequest.prototype.open = function(method, url) {
+        this._url = url;
+        return originalOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function() {
+        this.addEventListener('load', function() {
+            // Intercept Bookie API calls
+            if (this._url && this._url.includes('bookie.php') && this._url.includes('step=getMatches')) {
+                try {
+                    const response = JSON.parse(this.responseText);
+                    console.log("[EV Engine] Intercepted match data payload:", response);
+                    
+                    // The payload structure depends on Torn's exact API, 
+                    // but we store it to use when the DOM finally renders.
+                    if (response && response.matches) {
+                        // Very rough approximation - we just trigger the DOM scan shortly after data arrives
+                        setTimeout(() => {
+                             console.log("[EV Engine] Data arrived, triggering DOM scan...");
+                             processBetCards();
+                             injectStatusIndicator();
+                        }, 1000);
+                        
+                        setTimeout(() => processBetCards(), 3000); // safety net scan
+                    }
+                } catch (e) {
+                    console.error("[EV Engine] Failed to parse intercepted XHR:", e);
+                }
+            }
+        });
+        return originalSend.apply(this, arguments);
+    };
 
     // ==============================================================================
     // DOM MANIPULATION & UI INJECTION
