@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      0.0.10
+// @version      0.0.11
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -9,25 +9,39 @@
 // @match        https://www.torn.com/page.php?sid=bookie*
 // @updateURL    https://raw.githubusercontent.com/ofentsebotlhale/torn-ev-engine/main/torn-ev-engine.user.js
 // @downloadURL  https://raw.githubusercontent.com/ofentsebotlhale/torn-ev-engine/main/torn-ev-engine.user.js
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @connect      api.the-odds-api.com
 // @run-at       document-start
 // ==/UserScript==
 
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v0.0.10) at document-start...");
+    console.log("[EV Engine] Script initializing (v0.0.11) at document-start...");
 
     // ==============================================================================
     // CONFIGURATION & STATE
     // ==============================================================================
     
+    // Attempt to safely use GM_getValue in content scope if available, otherwise localStorage
+    let getSafeValue = (key, def) => {
+        try { return typeof GM_getValue === 'function' ? GM_getValue(key, def) : (window.localStorage.getItem(key) || def); } 
+        catch (e) { return window.localStorage.getItem(key) || def; }
+    };
+    
+    let setSafeValue = (key, val) => {
+        try { if (typeof GM_setValue === 'function') GM_setValue(key, val); else window.localStorage.setItem(key, val); }
+        catch (e) { window.localStorage.setItem(key, val); }
+    };
+    
     // Get stored API key or prompt user
-    let ODDS_API_KEY = window.localStorage.getItem('torn_ev_odds_api_key') || '';
+    let ODDS_API_KEY = getSafeValue('torn_ev_odds_api_key', '');
     if (!ODDS_API_KEY) {
         ODDS_API_KEY = window.prompt("Torn Bookie EV Engine\n\nPlease enter your API key for The Odds API:\n(Get one at https://the-odds-api.com)");
         if (ODDS_API_KEY && ODDS_API_KEY.trim() !== '') {
-            window.localStorage.setItem('torn_ev_odds_api_key', ODDS_API_KEY.trim());
+            setSafeValue('torn_ev_odds_api_key', ODDS_API_KEY.trim());
         } else {
             console.warn("[EV Engine] No API key provided. External data fetching will fail.");
         }
@@ -175,9 +189,34 @@
                 console.log("[EV Engine] Fetching fresh data from The Odds API...");
                 const url = `https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey=${ODDS_API_KEY}&regions=eu,uk&markets=h2h`;
                 
-                const response = await window.fetch(url);
-                if (!response.ok) {
-                    console.error("[EV Engine] Odds API Error:", response.status);
+                // Wrap GM_xmlhttpRequest in a Promise to match window.fetch syntax
+                const fetchWithGM = () => new Promise((resolve, reject) => {
+                    if (typeof GM_xmlhttpRequest === 'undefined') reject("GM_xmlhttpRequest not available");
+                    GM_xmlhttpRequest({
+                        method: "GET",
+                        url: url,
+                        onload: function(response) {
+                            if (response.status >= 200 && response.status < 300) {
+                                resolve({ ok: true, json: async () => JSON.parse(response.responseText) });
+                            } else {
+                                resolve({ ok: false, status: response.status });
+                            }
+                        },
+                        onerror: function(err) { reject(err); }
+                    });
+                });
+
+                let response;
+                try {
+                    // Try GM_xmlhttpRequest first to bypass CSP
+                    response = await fetchWithGM();
+                } catch (gmError) {
+                    // Fallback to standard fetch if running in restricted mode
+                    response = await window.fetch(url);
+                }
+
+                if (!response || !response.ok) {
+                    console.error("[EV Engine] Odds API Error:", response ? response.status : "Unknown");
                     return calculateImpliedProbability(tornOdds); 
                 }
                 oddsCache = await response.json();
@@ -405,13 +444,13 @@
     // Add a floating status indicator so the user knows it's loaded
     function injectStatusIndicator() {
         if (document.getElementById('ev-status-indicator')) {
-            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.10 LIVE (Click to rescan)';
+            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.11 LIVE (Click to rescan)';
             return;
         }
         const status = document.createElement('div');
         status.id = 'ev-status-indicator';
         status.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#10b981;color:#000;padding:5px 10px;border-radius:4px;font-size:10px;font-family:monospace;z-index:9999;font-weight:bold;cursor:pointer;box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-        status.textContent = 'EV ENGINE v0.0.10 LIVE (Click to rescan)';
+        status.textContent = 'EV ENGINE v0.0.11 LIVE (Click to rescan)';
         status.onclick = () => {
             console.log("[EV Engine] Manual rescan triggered.");
             processBetCards();
@@ -433,7 +472,8 @@
     // Wait for the main container to load, then observe it
     console.log("[EV Engine] Looking for Bookie app container...");
     const checkInterval = setInterval(() => {
-        const bookieApp = document.querySelector('[class*="bookie"], #bookie-root, #mainContainer .content-wrapper');
+        // Expand wrapper search to include common Torn structural containers
+        const bookieApp = document.querySelector('[class*="bookie"], #bookie-root, #mainContainer, .content-wrapper, [class*="match"]');
         if (bookieApp && bookieApp.children.length > 0) {
             clearInterval(checkInterval);
             observer.observe(bookieApp, { childList: true, subtree: true });
