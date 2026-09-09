@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      1.0.4
+// @version      1.0.5
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -9,28 +9,25 @@
 // @match        https://www.torn.com/page.php?sid=bookie*
 // @updateURL    https://raw.githubusercontent.com/ofentsebotlhale/torn-ev-engine/main/torn-ev-engine.user.js
 // @downloadURL  https://raw.githubusercontent.com/ofentsebotlhale/torn-ev-engine/main/torn-ev-engine.user.js
-// @grant        GM_xmlhttpRequest
-// @grant        GM_addStyle
-// @grant        GM_getValue
-// @grant        GM_setValue
+// @grant        none
 // @run-at       document-start
 // ==/UserScript==
 
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v1.0.4) at document-start...");
+    console.log("[EV Engine] Script initializing (v1.0.5) at document-start...");
 
     // ==============================================================================
     // CONFIGURATION & STATE
     // ==============================================================================
     
     // Get stored API key or prompt user
-    let ODDS_API_KEY = GM_getValue('torn_ev_odds_api_key', '');
+    let ODDS_API_KEY = window.localStorage.getItem('torn_ev_odds_api_key') || '';
     if (!ODDS_API_KEY) {
         ODDS_API_KEY = window.prompt("Torn Bookie EV Engine\n\nPlease enter your API key for The Odds API:\n(Get one at https://the-odds-api.com)");
         if (ODDS_API_KEY && ODDS_API_KEY.trim() !== '') {
-            GM_setValue('torn_ev_odds_api_key', ODDS_API_KEY.trim());
+            window.localStorage.setItem('torn_ev_odds_api_key', ODDS_API_KEY.trim());
         } else {
             console.warn("[EV Engine] No API key provided. External data fetching will fail.");
         }
@@ -41,7 +38,11 @@
     let userBankroll = 10000000; // 10m default
 
     // Styles for injected UI (Brutalist / Dark)
-    GM_addStyle(`
+    const injectStyles = () => {
+        if (document.getElementById('ev-engine-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'ev-engine-styles';
+        style.innerHTML = `
         .ev-badge {
             display: inline-flex;
             align-items: center;
@@ -122,7 +123,16 @@
             color: #eab308;
             font-weight: bold;
         }
-    `);
+    `;
+        (document.head || document.documentElement).appendChild(style);
+    };
+    
+    // Inject styles as soon as DOM is ready enough
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', injectStyles);
+    } else {
+        injectStyles();
+    }
 
     // ==============================================================================
     // CORE MATH ENGINE
