@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      0.0.9
+// @version      0.0.10
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -16,7 +16,7 @@
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v0.0.9) at document-start...");
+    console.log("[EV Engine] Script initializing (v0.0.10) at document-start...");
 
     // ==============================================================================
     // CONFIGURATION & STATE
@@ -214,9 +214,28 @@
     }
 
     // ==============================================================================
-    // XHR INTERCEPTION (RELIABLE REACT DATA CAPTURE)
+    // DUAL INTERCEPTION: FETCH & XHR (RELIABLE REACT DATA CAPTURE)
     // ==============================================================================
     
+    // Intercept window.fetch
+    const originalFetch = window.fetch;
+    window.fetch = async function(...args) {
+        const response = await originalFetch.apply(this, args);
+        const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+        
+        if (url.includes('bookie') || url.includes('step=getMatches')) {
+            try {
+                const clone = response.clone();
+                const data = await clone.json();
+                console.log("[EV Engine] Intercepted Fetch match payload:", data);
+                setTimeout(processBetCards, 800);
+            } catch (e) {
+                // Non-JSON or standard fetch response
+            }
+        }
+        return response;
+    };
+
     // We intercept the raw JSON data Torn sends to the frontend, rather than
     // fighting the React DOM which obfuscates classes and structures.
     const originalOpen = XMLHttpRequest.prototype.open;
@@ -261,9 +280,9 @@
     // DOM MANIPULATION & UI INJECTION
     // ==============================================================================
 
-    async function injectEVPanel(betCardNode, matchData, selectionData) {
-        if (betCardNode.querySelector('.ev-panel-container') || betCardNode.dataset.evInjected) return;
-        betCardNode.dataset.evInjected = 'true';
+    async function injectEVPanel(btnTarget, matchData, selectionData) {
+        if (btnTarget.dataset.evInjected || btnTarget.nextElementSibling?.classList.contains('ev-panel-container')) return;
+        btnTarget.dataset.evInjected = 'true';
 
         const tornOdds = selectionData.odds;
         const selectionName = selectionData.name;
@@ -274,12 +293,11 @@
         const evPercent = calculateEV(tornOdds, trueProb);
         
         if (evPercent <= 0 && window.location.search.indexOf('showAllEV=1') === -1) {
-             const btn = betCardNode.querySelector(`[title*="${selectionName}"]`) || betCardNode;
-             if (btn && !btn.querySelector('.ev-negative')) {
+             if (!btnTarget.querySelector('.ev-negative')) {
                  const badge = document.createElement('span');
                  badge.className = 'ev-badge ev-negative';
                  badge.textContent = evPercent.toFixed(1) + '% EV';
-                 btn.appendChild(badge);
+                 btnTarget.appendChild(badge);
              }
              return;
         }
@@ -319,8 +337,8 @@
             </div>
         `;
         
-        // Append panel below the betting buttons
-        betCardNode.appendChild(panel);
+        // Append panel directly beneath the betting button
+        btnTarget.insertAdjacentElement('afterend', panel);
     }
 
     // ==============================================================================
@@ -371,7 +389,8 @@
                 if (odds > 1.01 && odds < 500) { 
                     found++;
                     totalInjected++;
-                    injectEVPanel(btn.parentElement, { title: matchTitle }, { name: name, odds: odds });
+                    // Inject directly at the button level to prevent parent flex stacking
+                    injectEVPanel(btn, { title: matchTitle }, { name: name, odds: odds });
                 }
             }
         });
@@ -386,13 +405,13 @@
     // Add a floating status indicator so the user knows it's loaded
     function injectStatusIndicator() {
         if (document.getElementById('ev-status-indicator')) {
-            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.9 LIVE (Click to rescan)';
+            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.10 LIVE (Click to rescan)';
             return;
         }
         const status = document.createElement('div');
         status.id = 'ev-status-indicator';
         status.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#10b981;color:#000;padding:5px 10px;border-radius:4px;font-size:10px;font-family:monospace;z-index:9999;font-weight:bold;cursor:pointer;box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-        status.textContent = 'EV ENGINE v0.0.9 LIVE (Click to rescan)';
+        status.textContent = 'EV ENGINE v0.0.10 LIVE (Click to rescan)';
         status.onclick = () => {
             console.log("[EV Engine] Manual rescan triggered.");
             processBetCards();
@@ -414,11 +433,11 @@
     // Wait for the main container to load, then observe it
     console.log("[EV Engine] Looking for Bookie app container...");
     const checkInterval = setInterval(() => {
-        const bookieApp = document.getElementById('bookie-root') || document.querySelector('[class^="bookieWrap"]');
-        if (bookieApp) {
+        const bookieApp = document.querySelector('[class*="bookie"], #bookie-root, #mainContainer .content-wrapper');
+        if (bookieApp && bookieApp.children.length > 0) {
             clearInterval(checkInterval);
             observer.observe(bookieApp, { childList: true, subtree: true });
-            console.log("[EV Engine] MutationObserver attached to", bookieApp.tagName || bookieApp.id);
+            console.log("[EV Engine] MutationObserver attached to:", bookieApp.className || bookieApp.id);
             // Run once immediately
             setTimeout(processBetCards, 1000);
             injectStatusIndicator();
