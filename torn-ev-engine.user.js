@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      0.0.13
+// @version      0.0.14
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v0.0.13) at document-start...");
+    console.log("[EV Engine] Script initializing (v0.0.14) at document-start...");
 
     // Target the real page window context to catch page-level XHR/Fetch
     const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
@@ -336,26 +336,26 @@
 
             const text = el.textContent.trim().replace(/\s+/g, ' ');
             
-            // Extracts decimal numbers matching odds format (e.g., 1.85, 2.10, 15.00)
-            const matches = text.match(/\b([1-9]\d*(?:\.\d{1,2})?)\b/g);
-            if (!matches) return;
+            // Look specifically for buttons that have odds formats at the end
+            const oddsMatch = text.match(/(?:(.+?)\s+)?(\d+(?:\.\d{1,2})?)$/);
+            
+            if (oddsMatch && !text.toLowerCase().includes('page') && !text.toLowerCase().includes('max')) {
+                const potentialOdds = parseFloat(oddsMatch[2]);
 
-            // Pick the last numeric float as the odds
-            const potentialOdds = parseFloat(matches[matches.length - 1]);
+                if (!isNaN(potentialOdds) && potentialOdds > 1.01 && potentialOdds < 500) {
+                    // Ignore input boxes or bet amount fields
+                    if (el.tagName === 'INPUT' || el.querySelector('input')) return;
 
-            if (!isNaN(potentialOdds) && potentialOdds > 1.01 && potentialOdds < 500) {
-                // Ignore input boxes or bet amount fields
-                if (el.tagName === 'INPUT' || el.querySelector('input')) return;
+                    const name = (oddsMatch[1] || "").trim() || "Selection";
+                    
+                    // Climb up DOM to isolate match context title
+                    const parentBlock = el.closest('[class*="match"], [class*="wrapper"], li');
+                    const titleEl = parentBlock ? parentBlock.querySelector('[class*="team"], [class*="title"], [class*="name"], h3, strong') : null;
+                    const matchTitle = titleEl ? titleEl.textContent.trim() : "Unknown Match";
 
-                const name = text.replace(potentialOdds.toString(), '').trim() || "Selection";
-                
-                // Climb up DOM to isolate match context title
-                const parentBlock = el.closest('[class*="match"], [class*="wrapper"], li');
-                const titleEl = parentBlock ? parentBlock.querySelector('[class*="team"], [class*="title"], [class*="name"], h3, strong') : null;
-                const matchTitle = titleEl ? titleEl.textContent.trim() : "Unknown Match";
-
-                found++;
-                injectEVPanel(el, { title: matchTitle }, { name: name, odds: potentialOdds });
+                    found++;
+                    injectEVPanel(el, { title: matchTitle }, { name: name, odds: potentialOdds });
+                }
             }
         });
 
@@ -367,7 +367,7 @@
         const status = document.createElement('div');
         status.id = 'ev-status-indicator';
         status.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#10b981;color:#000;padding:5px 10px;border-radius:4px;font-size:10px;font-family:monospace;z-index:9999;font-weight:bold;cursor:pointer;box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-        status.textContent = 'EV ENGINE v0.0.13 LIVE (Click to rescan)';
+        status.textContent = 'EV ENGINE v0.0.14 LIVE (Click to rescan)';
         status.onclick = () => processBetCards();
         document.body.appendChild(status);
     }
