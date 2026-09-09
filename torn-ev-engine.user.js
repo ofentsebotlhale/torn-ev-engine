@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      1.0.7
+// @version      0.0.7
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -16,7 +16,7 @@
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v1.0.5) at document-start...");
+    console.log("[EV Engine] Script initializing (v0.0.7) at document-start...");
 
     // ==============================================================================
     // CONFIGURATION & STATE
@@ -383,13 +383,13 @@
     // Add a floating status indicator so the user knows it's loaded
     function injectStatusIndicator() {
         if (document.getElementById('ev-status-indicator')) {
-            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v1.0.7 LIVE (Click to rescan)';
+            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.7 LIVE (Click to rescan)';
             return;
         }
         const status = document.createElement('div');
         status.id = 'ev-status-indicator';
         status.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#10b981;color:#000;padding:5px 10px;border-radius:4px;font-size:10px;font-family:monospace;z-index:9999;font-weight:bold;cursor:pointer;box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-        status.textContent = 'EV ENGINE v1.0.7 LIVE (Click to rescan)';
+        status.textContent = 'EV ENGINE v0.0.7 LIVE (Click to rescan)';
         status.onclick = () => {
             console.log("[EV Engine] Manual rescan triggered.");
             processBetCards();
