@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      0.0.11
+// @version      0.0.12
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v0.0.11) at document-start...");
+    console.log("[EV Engine] Script initializing (v0.0.12) at document-start...");
 
     // ==============================================================================
     // CONFIGURATION & STATE
@@ -408,24 +408,23 @@
             const text = btn.textContent.trim().replace(/\s+/g, ' ');
             
             // Regex explanation:
-            // Matches optional team name text, followed by an optional space, and ending with decimal odds.
-            // Example: "Team A 1.50" or "1.50" or "Draw 3.4"
-            const oddsMatch = text.match(/(?:(.+?)\s+)?(\d+\.\d{1,2})$/);
+            // Torn odds can be integers (e.g. 5) or decimals (e.g. 1.50 or 1.5).
+            // This captures everything before the number as the team, and the final number block as odds.
+            const oddsMatch = text.match(/(?:(.+?)\s+)?(\d+(?:\.\d+)?)$/);
             
-            // Usually betting odds buttons have some text and a number, and ignore generic 'bet' buttons
-            if (oddsMatch && !text.toLowerCase().includes('bet') && !text.toLowerCase().includes('max')) {
+            // Exclude common false positives (like navigation, pagination, or explicit action buttons)
+            if (oddsMatch && !text.toLowerCase().includes('bet') && !text.toLowerCase().includes('max') && !text.toLowerCase().includes('page')) {
                 const odds = parseFloat(oddsMatch[2]);
                 
-                // Extract selection name from the match group, fallback to "Selection"
-                const name = (oddsMatch[1] || "").trim() || "Selection";
-                
-                // Attempt to find a parent match block to get the Match Title
-                const parentBlock = btn.closest('[class^="matchWrap_"], [class*="matchContainer"], li');
-                const titleEl = parentBlock ? parentBlock.querySelector('[class^="teamNames_"], .match-name, h3, .title, strong') : null;
-                const matchTitle = titleEl ? titleEl.textContent.trim() : "Unknown Match";
-                
-                // Sanity check that it actually looks like an odds number
-                if (odds > 1.01 && odds < 500) { 
+                // If it successfully parsed a float, proceed
+                if (!isNaN(odds) && odds > 1.01 && odds < 1000) {
+                    const name = (oddsMatch[1] || "").trim() || "Selection";
+                    
+                    // Attempt to find a parent match block to get the Match Title
+                    const parentBlock = btn.closest('[class^="matchWrap_"], [class*="matchContainer"], li');
+                    const titleEl = parentBlock ? parentBlock.querySelector('[class^="teamNames_"], .match-name, h3, .title, strong') : null;
+                    const matchTitle = titleEl ? titleEl.textContent.trim() : "Unknown Match";
+                    
                     found++;
                     totalInjected++;
                     // Inject directly at the button level to prevent parent flex stacking
@@ -444,13 +443,13 @@
     // Add a floating status indicator so the user knows it's loaded
     function injectStatusIndicator() {
         if (document.getElementById('ev-status-indicator')) {
-            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.11 LIVE (Click to rescan)';
+            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.12 LIVE (Click to rescan)';
             return;
         }
         const status = document.createElement('div');
         status.id = 'ev-status-indicator';
         status.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#10b981;color:#000;padding:5px 10px;border-radius:4px;font-size:10px;font-family:monospace;z-index:9999;font-weight:bold;cursor:pointer;box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-        status.textContent = 'EV ENGINE v0.0.11 LIVE (Click to rescan)';
+        status.textContent = 'EV ENGINE v0.0.12 LIVE (Click to rescan)';
         status.onclick = () => {
             console.log("[EV Engine] Manual rescan triggered.");
             processBetCards();
