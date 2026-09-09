@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      0.0.12
+// @version      0.0.13
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -12,20 +12,22 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @connect      api.the-odds-api.com
+// @grant        unsafeWindow
 // @run-at       document-start
 // ==/UserScript==
 
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v0.0.12) at document-start...");
+    console.log("[EV Engine] Script initializing (v0.0.13) at document-start...");
+
+    // Target the real page window context to catch page-level XHR/Fetch
+    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     // ==============================================================================
     // CONFIGURATION & STATE
     // ==============================================================================
     
-    // Attempt to safely use GM_getValue in content scope if available, otherwise localStorage
     let getSafeValue = (key, def) => {
         try { return typeof GM_getValue === 'function' ? GM_getValue(key, def) : (window.localStorage.getItem(key) || def); } 
         catch (e) { return window.localStorage.getItem(key) || def; }
@@ -36,22 +38,16 @@
         catch (e) { window.localStorage.setItem(key, val); }
     };
     
-    // Get stored API key or prompt user
     let ODDS_API_KEY = getSafeValue('torn_ev_odds_api_key', '');
     if (!ODDS_API_KEY) {
         ODDS_API_KEY = window.prompt("Torn Bookie EV Engine\n\nPlease enter your API key for The Odds API:\n(Get one at https://the-odds-api.com)");
         if (ODDS_API_KEY && ODDS_API_KEY.trim() !== '') {
             setSafeValue('torn_ev_odds_api_key', ODDS_API_KEY.trim());
-        } else {
-            console.warn("[EV Engine] No API key provided. External data fetching will fail.");
         }
     }
     
-    // Current user bankroll (would ideally be parsed from the DOM or API)
-    // For demonstration, we'll set a static bankroll or look for it on page
     let userBankroll = 10000000; // 10m default
 
-    // Styles for injected UI (Brutalist / Dark)
     const injectStyles = () => {
         if (document.getElementById('ev-engine-styles')) return;
         const style = document.createElement('style');
@@ -116,7 +112,7 @@
             font-weight: 600;
         }
         .ev-stat-value {
-            font-family: 'monospace';
+            font-family: monospace;
             font-weight: 700;
             font-size: 14px;
             color: #f4f4f5;
@@ -131,7 +127,7 @@
             border: 1px dashed #3f3f46;
             font-size: 11px;
             color: #d4d4d8;
-            font-family: 'monospace';
+            font-family: monospace;
         }
         .ev-kelly-amount {
             color: #eab308;
@@ -141,7 +137,6 @@
         (document.head || document.documentElement).appendChild(style);
     };
     
-    // Inject styles as soon as DOM is ready enough
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', injectStyles);
     } else {
@@ -160,17 +155,15 @@
     function calculateEV(tornOdds, trueProbability) {
         const potentialProfit = tornOdds - 1;
         const lossProbability = 1 - trueProbability;
-        const ev = (trueProbability * potentialProfit) - (lossProbability * 1);
-        return ev * 100;
+        return ((trueProbability * potentialProfit) - (lossProbability * 1)) * 100;
     }
 
-    function calculateKelly(tornOdds, trueProbability, fraction = 0.5) {
+    function calculateKelly(tornOdds, trueProbability, fraction = 0.25) {
         const b = tornOdds - 1;
         const p = trueProbability;
         const q = 1 - p;
         const kellyFraction = (b * p - q) / b;
-        const safeKelly = Math.max(0, Math.min(kellyFraction * fraction, 0.10));
-        return safeKelly;
+        return Math.max(0, Math.min(kellyFraction * fraction, 0.10));
     }
 
     // ==============================================================================
@@ -184,46 +177,28 @@
         if (!ODDS_API_KEY) return calculateImpliedProbability(tornOdds);
 
         try {
-            // 5-minute memory cache to protect your API limits
             if (!oddsCache || Date.now() - cacheTimestamp > 300000) {
-                console.log("[EV Engine] Fetching fresh data from The Odds API...");
                 const url = `https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey=${ODDS_API_KEY}&regions=eu,uk&markets=h2h`;
                 
-                // Wrap GM_xmlhttpRequest in a Promise to match window.fetch syntax
                 const fetchWithGM = () => new Promise((resolve, reject) => {
-                    if (typeof GM_xmlhttpRequest === 'undefined') reject("GM_xmlhttpRequest not available");
+                    if (typeof GM_xmlhttpRequest === 'undefined') reject("GM_xmlhttpRequest unavailable");
                     GM_xmlhttpRequest({
                         method: "GET",
                         url: url,
-                        onload: function(response) {
-                            if (response.status >= 200 && response.status < 300) {
-                                resolve({ ok: true, json: async () => JSON.parse(response.responseText) });
-                            } else {
-                                resolve({ ok: false, status: response.status });
-                            }
-                        },
-                        onerror: function(err) { reject(err); }
+                        onload: (res) => res.status >= 200 && res.status < 300 ? resolve({ ok: true, json: async () => JSON.parse(res.responseText) }) : resolve({ ok: false, status: res.status }),
+                        onerror: (err) => reject(err)
                     });
                 });
 
                 let response;
-                try {
-                    // Try GM_xmlhttpRequest first to bypass CSP
-                    response = await fetchWithGM();
-                } catch (gmError) {
-                    // Fallback to standard fetch if running in restricted mode
-                    response = await window.fetch(url);
-                }
+                try { response = await fetchWithGM(); } 
+                catch (e) { response = await pageWindow.fetch(url); }
 
-                if (!response || !response.ok) {
-                    console.error("[EV Engine] Odds API Error:", response ? response.status : "Unknown");
-                    return calculateImpliedProbability(tornOdds); 
-                }
+                if (!response || !response.ok) return calculateImpliedProbability(tornOdds);
                 oddsCache = await response.json();
                 cacheTimestamp = Date.now();
             }
 
-            // Attempt to find a matching event using basic string inclusion
             const matchLower = matchName.toLowerCase();
             const matchedEvent = oddsCache.find(event => 
                 matchLower.includes(event.home_team.toLowerCase()) || 
@@ -231,112 +206,71 @@
             );
 
             if (matchedEvent && matchedEvent.bookmakers.length > 0) {
-                // Get odds from the first available real-world bookmaker
                 const market = matchedEvent.bookmakers[0].markets[0];
                 const outcome = market.outcomes.find(o => 
                     selectionName.toLowerCase().includes(o.name.toLowerCase()) ||
                     o.name.toLowerCase().includes(selectionName.toLowerCase())
                 );
-
-                if (outcome && outcome.price > 1) {
-                    return 1 / outcome.price; // True implied probability
-                }
+                if (outcome && outcome.price > 1) return 1 / outcome.price;
             }
-            
-            // Fallback if no exact string match is found
             return calculateImpliedProbability(tornOdds);
-
         } catch (e) {
-            console.error("[EV Engine] Failed to fetch external odds:", e);
             return calculateImpliedProbability(tornOdds);
         }
     }
 
     // ==============================================================================
-    // DUAL INTERCEPTION: FETCH & XHR (RELIABLE REACT DATA CAPTURE)
+    // PAGE-LEVEL INTERCEPTION (FETCH & XHR)
     // ==============================================================================
     
-    // Intercept window.fetch
-    const originalFetch = window.fetch;
-    window.fetch = async function(...args) {
-        const response = await originalFetch.apply(this, args);
+    const origFetch = pageWindow.fetch;
+    pageWindow.fetch = async function(...args) {
+        const response = await origFetch.apply(this, args);
         const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
-        
         if (url.includes('bookie') || url.includes('step=getMatches')) {
-            try {
-                const clone = response.clone();
-                const data = await clone.json();
-                console.log("[EV Engine] Intercepted Fetch match payload:", data);
-                setTimeout(processBetCards, 800);
-            } catch (e) {
-                // Non-JSON or standard fetch response
-            }
+            setTimeout(processBetCards, 800);
         }
         return response;
     };
 
-    // We intercept the raw JSON data Torn sends to the frontend, rather than
-    // fighting the React DOM which obfuscates classes and structures.
-    const originalOpen = XMLHttpRequest.prototype.open;
-    const originalSend = XMLHttpRequest.prototype.send;
+    const origOpen = pageWindow.XMLHttpRequest.prototype.open;
+    const origSend = pageWindow.XMLHttpRequest.prototype.send;
     
-    let latestMatchData = {};
-
-    XMLHttpRequest.prototype.open = function(...args) {
-        this._url = args[1]; // url is always the second argument in XHR.open
-        return originalOpen.apply(this, args);
+    pageWindow.XMLHttpRequest.prototype.open = function(...args) {
+        this._url = args[1];
+        return origOpen.apply(this, args);
     };
 
-    XMLHttpRequest.prototype.send = function(...args) {
+    pageWindow.XMLHttpRequest.prototype.send = function(...args) {
         this.addEventListener('load', function() {
-            // Intercept Bookie API calls
             if (this._url && this._url.includes('bookie.php') && this._url.includes('step=getMatches')) {
-                try {
-                    const response = JSON.parse(this.responseText);
-                    console.log("[EV Engine] Intercepted match data payload:", response);
-                    
-                    // The payload structure depends on Torn's exact API, 
-                    // but we store it to use when the DOM finally renders.
-                    if (response && response.matches) {
-                        // Very rough approximation - we just trigger the DOM scan shortly after data arrives
-                        setTimeout(() => {
-                             console.log("[EV Engine] Data arrived, triggering DOM scan...");
-                             processBetCards();
-                             injectStatusIndicator();
-                        }, 1000);
-                        
-                        setTimeout(() => processBetCards(), 3000); // safety net scan
-                    }
-                } catch (e) {
-                    console.error("[EV Engine] Failed to parse intercepted XHR:", e);
-                }
+                setTimeout(processBetCards, 500);
             }
         });
-        return originalSend.apply(this, args);
+        return origSend.apply(this, args);
     };
 
     // ==============================================================================
     // DOM MANIPULATION & UI INJECTION
     // ==============================================================================
 
-    async function injectEVPanel(btnTarget, matchData, selectionData) {
-        if (btnTarget.dataset.evInjected || btnTarget.nextElementSibling?.classList.contains('ev-panel-container')) return;
-        btnTarget.dataset.evInjected = 'true';
+    async function injectEVPanel(targetEl, matchData, selectionData) {
+        if (targetEl.dataset.evInjected || targetEl.nextElementSibling?.classList.contains('ev-panel-container')) return;
+        targetEl.dataset.evInjected = 'true';
 
         const tornOdds = selectionData.odds;
         const selectionName = selectionData.name;
         
         const trueProb = await fetchRealWorldProbability(matchData.title, selectionName, tornOdds);
-        
         const tornImpliedProb = calculateImpliedProbability(tornOdds);
         const evPercent = calculateEV(tornOdds, trueProb);
         
         if (evPercent <= 0 && window.location.search.indexOf('showAllEV=1') === -1) {
-             if (!btnTarget.querySelector('.ev-negative')) {
+             if (!targetEl.querySelector('.ev-negative')) {
                  const badge = document.createElement('span');
                  badge.className = 'ev-badge ev-negative';
                  badge.textContent = evPercent.toFixed(1) + '% EV';
-                 btnTarget.appendChild(badge);
+                 targetEl.appendChild(badge);
              }
              return;
         }
@@ -347,9 +281,7 @@
         const panel = document.createElement('div');
         panel.className = 'ev-panel-container';
         
-        const formatMoney = (amount) => {
-            return '$' + amount.toLocaleString('en-US', { maximumFractionDigits: 0 });
-        };
+        const formatMoney = (amount) => '$' + amount.toLocaleString('en-US', { maximumFractionDigits: 0 });
 
         panel.innerHTML = `
             <div class="ev-panel-header">
@@ -376,111 +308,87 @@
             </div>
         `;
         
-        // Append panel directly beneath the betting button
-        btnTarget.insertAdjacentElement('afterend', panel);
+        targetEl.insertAdjacentElement('afterend', panel);
     }
 
     // ==============================================================================
-    // MUTATION OBSERVER (WATCH FOR BET CARDS)
+    // DOM SCANNER & PARSER
     // ==============================================================================
     
     function processBetCards() {
-        console.log("[EV Engine] Scanning for betting cards...");
+        console.log("[EV Engine] Scanning for betting selections...");
         
-        // Let's use Torn's actual classes for Bookie if possible, but fallback extremely wide
-        const matchBlocks = document.querySelectorAll(
-            '[class^="matchWrap_"], [class*="matchContainer"], li[class*="match_"], .match-list > li, [class*="matchList"] > div, ul > li'
-        );
+        // Expanded target scope for modern React/Torn structures
+        const betCandidates = document.querySelectorAll(`
+            button, 
+            [role="button"], 
+            [class*="option_"], 
+            [class*="bet_"], 
+            [class*="outcome_"],
+            label[class*="bet"],
+            div[class*="bets"] > div
+        `);
         
-        console.log(`[EV Engine] Found ${matchBlocks.length} potential match blocks.`);
-        
-        let totalInjected = 0;
-
-        // Fallback: Scan every button on the page that has numbers. 
-        // We do this globally because Torn's React classes change constantly.
-        const allButtons = document.querySelectorAll('button, div[role="button"], a[role="button"]');
         let found = 0;
-        
-        allButtons.forEach(btn => {
-            if (btn.dataset.evInjected || btn.closest('.ev-panel-container') || btn.closest('.ev-badge')) return;
+
+        betCandidates.forEach(el => {
+            if (el.dataset.evInjected || el.closest('.ev-panel-container') || el.closest('.ev-badge')) return;
+
+            const text = el.textContent.trim().replace(/\s+/g, ' ');
             
-            // Extract raw text, replacing common inner tags or spacing issues
-            const text = btn.textContent.trim().replace(/\s+/g, ' ');
-            
-            // Regex explanation:
-            // Torn odds can be integers (e.g. 5) or decimals (e.g. 1.50 or 1.5).
-            // This captures everything before the number as the team, and the final number block as odds.
-            const oddsMatch = text.match(/(?:(.+?)\s+)?(\d+(?:\.\d+)?)$/);
-            
-            // Exclude common false positives (like navigation, pagination, or explicit action buttons)
-            if (oddsMatch && !text.toLowerCase().includes('bet') && !text.toLowerCase().includes('max') && !text.toLowerCase().includes('page')) {
-                const odds = parseFloat(oddsMatch[2]);
+            // Extracts decimal numbers matching odds format (e.g., 1.85, 2.10, 15.00)
+            const matches = text.match(/\b([1-9]\d*(?:\.\d{1,2})?)\b/g);
+            if (!matches) return;
+
+            // Pick the last numeric float as the odds
+            const potentialOdds = parseFloat(matches[matches.length - 1]);
+
+            if (!isNaN(potentialOdds) && potentialOdds > 1.01 && potentialOdds < 500) {
+                // Ignore input boxes or bet amount fields
+                if (el.tagName === 'INPUT' || el.querySelector('input')) return;
+
+                const name = text.replace(potentialOdds.toString(), '').trim() || "Selection";
                 
-                // If it successfully parsed a float, proceed
-                if (!isNaN(odds) && odds > 1.01 && odds < 1000) {
-                    const name = (oddsMatch[1] || "").trim() || "Selection";
-                    
-                    // Attempt to find a parent match block to get the Match Title
-                    const parentBlock = btn.closest('[class^="matchWrap_"], [class*="matchContainer"], li');
-                    const titleEl = parentBlock ? parentBlock.querySelector('[class^="teamNames_"], .match-name, h3, .title, strong') : null;
-                    const matchTitle = titleEl ? titleEl.textContent.trim() : "Unknown Match";
-                    
-                    found++;
-                    totalInjected++;
-                    // Inject directly at the button level to prevent parent flex stacking
-                    injectEVPanel(btn, { title: matchTitle }, { name: name, odds: odds });
-                }
+                // Climb up DOM to isolate match context title
+                const parentBlock = el.closest('[class*="match"], [class*="wrapper"], li');
+                const titleEl = parentBlock ? parentBlock.querySelector('[class*="team"], [class*="title"], [class*="name"], h3, strong') : null;
+                const matchTitle = titleEl ? titleEl.textContent.trim() : "Unknown Match";
+
+                found++;
+                injectEVPanel(el, { title: matchTitle }, { name: name, odds: potentialOdds });
             }
         });
-        
-        console.log(`[EV Engine] Fallback button scan found and injected ${found} bet buttons.`);
-        
-        if (totalInjected === 0) {
-            console.log("[EV Engine] Could not find any valid odds buttons. Will try again later.");
-        }
+
+        console.log(`[EV Engine] Scan finished. Injected ${found} bet buttons.`);
     }
 
-    // Add a floating status indicator so the user knows it's loaded
     function injectStatusIndicator() {
-        if (document.getElementById('ev-status-indicator')) {
-            document.getElementById('ev-status-indicator').textContent = 'EV ENGINE v0.0.12 LIVE (Click to rescan)';
-            return;
-        }
+        if (document.getElementById('ev-status-indicator')) return;
         const status = document.createElement('div');
         status.id = 'ev-status-indicator';
         status.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#10b981;color:#000;padding:5px 10px;border-radius:4px;font-size:10px;font-family:monospace;z-index:9999;font-weight:bold;cursor:pointer;box-shadow: 0 4px 6px rgba(0,0,0,0.3);';
-        status.textContent = 'EV ENGINE v0.0.12 LIVE (Click to rescan)';
-        status.onclick = () => {
-            console.log("[EV Engine] Manual rescan triggered.");
-            processBetCards();
-        };
+        status.textContent = 'EV ENGINE v0.0.13 LIVE (Click to rescan)';
+        status.onclick = () => processBetCards();
         document.body.appendChild(status);
     }
 
-    // Start observer
     let timeoutId;
-    const observer = new MutationObserver((mutations) => {
-        // Debounce the observer to prevent it from firing too rapidly
+    const observer = new MutationObserver(() => {
         clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
             processBetCards();
             injectStatusIndicator();
-        }, 500);
+        }, 400);
     });
 
-    // Wait for the main container to load, then observe it
-    console.log("[EV Engine] Looking for Bookie app container...");
     const checkInterval = setInterval(() => {
-        // Expand wrapper search to include common Torn structural containers
-        const bookieApp = document.querySelector('[class*="bookie"], #bookie-root, #mainContainer, .content-wrapper, [class*="match"]');
+        const bookieApp = document.querySelector('[class*="bookie"], #bookie-root, #mainContainer, .content-wrapper, [class*="content"]');
         if (bookieApp && bookieApp.children.length > 0) {
             clearInterval(checkInterval);
             observer.observe(bookieApp, { childList: true, subtree: true });
-            console.log("[EV Engine] MutationObserver attached to:", bookieApp.className || bookieApp.id);
-            // Run once immediately
-            setTimeout(processBetCards, 1000);
+            setTimeout(processBetCards, 800);
             injectStatusIndicator();
         }
-    }, 1000);
+    }, 800);
 
 })();
