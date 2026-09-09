@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      1.0.3
+// @version      1.0.4
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
 // @match        https://www.torn.com/loader.php?sid=bookie*
+// @match        https://www.torn.com/page.php?sid=bookie*
 // @updateURL    https://raw.githubusercontent.com/ofentsebotlhale/torn-ev-engine/main/torn-ev-engine.user.js
 // @downloadURL  https://raw.githubusercontent.com/ofentsebotlhale/torn-ev-engine/main/torn-ev-engine.user.js
 // @grant        GM_xmlhttpRequest
@@ -18,7 +19,7 @@
 (function() {
     'use strict';
     
-    console.log("[EV Engine] Script initializing (v1.0.3) at document-start...");
+    console.log("[EV Engine] Script initializing (v1.0.4) at document-start...");
 
     // ==============================================================================
     // CONFIGURATION & STATE
