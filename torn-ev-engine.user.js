@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      1.0.1
+// @version      1.0.2
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -12,11 +12,13 @@
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @run-at       document-idle
+// @run-at       document-end
 // ==/UserScript==
 
 (function() {
     'use strict';
+    
+    console.log("[EV Engine] Script initializing (v1.0.2)...");
 
     // ==============================================================================
     // CONFIGURATION & STATE
@@ -238,67 +240,113 @@
     // ==============================================================================
     // MUTATION OBSERVER (WATCH FOR BET CARDS)
     // ==============================================================================
-    // Torn Bookie is a dynamic SPA. We watch the DOM for match cards being added.
     
     function processBetCards() {
-        // Torn Bookie match blocks
-        const matchBlocks = document.querySelectorAll('[class^="matchWrap_"]');
+        console.log("[EV Engine] Scanning for betting cards...");
         
-        matchBlocks.forEach(block => {
-            if (block.dataset.evProcessed) return;
-            
-            // Try to extract basic data from the DOM
-            const titleEl = block.querySelector('[class^="teamNames_"]');
-            if (!titleEl) return;
-            
-            const matchTitle = titleEl.textContent.trim();
-            
-            // Find betting buttons inside this block
-            const betButtons = block.querySelectorAll('button[class*="betButton_"]');
-            
-            betButtons.forEach(btn => {
-                // Extract odds and selection from button text
-                // Usually looks like "Team A 1.50"
-                const text = btn.textContent.trim();
-                const oddsMatch = text.match(/([\d.]+)$/);
-                if (!oddsMatch) return;
+        // Broaden selectors to catch any potential bet block
+        const matchBlocks = document.querySelectorAll(
+            '[class^="matchWrap_"], [class*="matchContainer"], li[class*="match_"], .match-list > li, [class*="matchList"] > div'
+        );
+        
+        console.log(`[EV Engine] Found ${matchBlocks.length} potential match blocks.`);
+        
+        // If we found blocks, process them
+        if (matchBlocks.length > 0) {
+            matchBlocks.forEach(block => {
+                if (block.dataset.evProcessed) return;
                 
-                const odds = parseFloat(oddsMatch[1]);
-                const name = text.replace(oddsMatch[1], '').trim();
+                // Get the title
+                const titleEl = block.querySelector('[class^="teamNames_"], .match-name, h3, .title');
+                const matchTitle = titleEl ? titleEl.textContent.trim() : "Unknown Match";
                 
-                if (odds && name) {
-                    // Inject our EV Engine logic directly onto the button's parent
-                    injectEVPanel(btn.parentElement, { title: matchTitle }, { name: name, odds: odds });
+                // Find betting buttons inside this block
+                const betButtons = block.querySelectorAll('button');
+                
+                let processedButtons = 0;
+                betButtons.forEach(btn => {
+                    if (btn.dataset.evInjected || btn.closest('.ev-panel-container')) return;
+                    
+                    const text = btn.textContent.trim();
+                    // Match a string ending with a decimal number (e.g., "Team A 1.50" or just "1.50")
+                    const oddsMatch = text.match(/([\d.]+)$/);
+                    
+                    if (oddsMatch) {
+                        const odds = parseFloat(oddsMatch[1]);
+                        const name = text.replace(oddsMatch[1], '').trim() || "Draw/Team";
+                        
+                        if (odds > 1) {
+                            injectEVPanel(btn.parentElement, { title: matchTitle }, { name: name, odds: odds });
+                            processedButtons++;
+                        }
+                    }
+                });
+                
+                if (processedButtons > 0) {
+                    block.dataset.evProcessed = 'true';
                 }
             });
-            
-            block.dataset.evProcessed = 'true';
-        });
+        } else {
+            // Fallback: Scan every button on the page that has numbers
+            const allButtons = document.querySelectorAll('button, div[role="button"], a[role="button"]');
+            let found = 0;
+            allButtons.forEach(btn => {
+                if (btn.dataset.evInjected || btn.closest('.ev-panel-container') || btn.closest('.ev-badge')) return;
+                
+                const text = btn.textContent.trim();
+                const oddsMatch = text.match(/([\d.]+)$/);
+                
+                // Usually betting odds buttons have some text and a number, e.g. "Torn City 2.50"
+                if (oddsMatch && text.length > oddsMatch[1].length && !text.includes('bet')) {
+                    const odds = parseFloat(oddsMatch[1]);
+                    const name = text.replace(oddsMatch[1], '').trim() || "Selection";
+                    
+                    if (odds > 1 && odds < 500) { // sanity check on odds
+                        found++;
+                        injectEVPanel(btn.parentElement, { title: "Unknown Match" }, { name: name, odds: odds });
+                    }
+                }
+            });
+            console.log(`[EV Engine] Fallback button scan found ${found} bet buttons.`);
+        }
+    }
+
+    // Add a floating status indicator so the user knows it's loaded
+    function injectStatusIndicator() {
+        if (document.getElementById('ev-status-indicator')) return;
+        const status = document.createElement('div');
+        status.id = 'ev-status-indicator';
+        status.style.cssText = 'position:fixed;bottom:10px;right:10px;background:#10b981;color:#000;padding:5px 10px;border-radius:4px;font-size:10px;font-family:monospace;z-index:9999;font-weight:bold;cursor:pointer;';
+        status.textContent = 'EV ENGINE v1.0.2 LIVE (Click to rescan)';
+        status.onclick = () => {
+            console.log("[EV Engine] Manual rescan triggered.");
+            processBetCards();
+        };
+        document.body.appendChild(status);
     }
 
     // Start observer
+    let timeoutId;
     const observer = new MutationObserver((mutations) => {
-        let shouldProcess = false;
-        for (let mutation of mutations) {
-            if (mutation.addedNodes.length > 0) {
-                shouldProcess = true;
-                break;
-            }
-        }
-        if (shouldProcess) {
+        // Debounce the observer to prevent it from firing too rapidly
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
             processBetCards();
-        }
+            injectStatusIndicator();
+        }, 500);
     });
 
     // Wait for the main container to load, then observe it
+    console.log("[EV Engine] Looking for Bookie app container...");
     const checkInterval = setInterval(() => {
         const bookieApp = document.getElementById('bookie-root') || document.querySelector('.bookie-app') || document.body;
         if (bookieApp) {
             clearInterval(checkInterval);
             observer.observe(bookieApp, { childList: true, subtree: true });
-            console.log("[EV Engine] MutationObserver attached to Bookie app");
+            console.log("[EV Engine] MutationObserver attached to", bookieApp.tagName || bookieApp.id);
             // Run once immediately
-            processBetCards();
+            setTimeout(processBetCards, 1000);
+            injectStatusIndicator();
         }
     }, 1000);
 
