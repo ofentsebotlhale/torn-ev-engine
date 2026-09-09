@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      0.0.17
+// @version      0.0.18
 // @description  Sleek, minimal EV Engine for Torn Bookie with auto-stake placement and a compact HUD.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -86,7 +86,7 @@
         #ev-hud {
             position: fixed;
             bottom: 16px;
-            right: 16px;
+            left: 16px;
             width: 240px;
             background: #09090b;
             border: 1px solid #27272a;
