@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bookie EV Engine
 // @namespace    http://tampermonkey.net/
-// @version      1.0.5
+// @version      1.0.6
 // @description  Intercepts Torn Bookie XHR to calculate Expected Value (EV) and Kelly Criterion stakes using real-world API odds.
 // @author       AI Studio
 // @match        https://www.torn.com/bookie.php*
@@ -163,23 +163,54 @@
     // EXTERNAL API FETCHING
     // ==============================================================================
     
+    let oddsCache = null;
+    let cacheTimestamp = 0;
+
     async function fetchRealWorldProbability(matchName, selectionName, tornOdds) {
-        return new Promise((resolve) => {
-            setTimeout(() => {
-                const hasEdge = Math.random() > 0.8;
-                const tornImplied = calculateImpliedProbability(tornOdds);
+        if (!ODDS_API_KEY) return calculateImpliedProbability(tornOdds);
+
+        try {
+            // 5-minute memory cache to protect your API limits
+            if (!oddsCache || Date.now() - cacheTimestamp > 300000) {
+                console.log("[EV Engine] Fetching fresh data from The Odds API...");
+                const url = `https://api.the-odds-api.com/v4/sports/upcoming/odds/?apiKey=${ODDS_API_KEY}&regions=eu,uk&markets=h2h`;
                 
-                let trueProb;
-                if (hasEdge) {
-                    trueProb = tornImplied * (1 + (Math.random() * 0.15));
-                } else {
-                    trueProb = tornImplied * (1 - (Math.random() * 0.05));
+                const response = await window.fetch(url);
+                if (!response.ok) {
+                    console.error("[EV Engine] Odds API Error:", response.status);
+                    return calculateImpliedProbability(tornOdds); 
                 }
-                
-                trueProb = Math.min(0.99, trueProb);
-                resolve(trueProb);
-            }, 300);
-        });
+                oddsCache = await response.json();
+                cacheTimestamp = Date.now();
+            }
+
+            // Attempt to find a matching event using basic string inclusion
+            const matchLower = matchName.toLowerCase();
+            const matchedEvent = oddsCache.find(event => 
+                matchLower.includes(event.home_team.toLowerCase()) || 
+                matchLower.includes(event.away_team.toLowerCase())
+            );
+
+            if (matchedEvent && matchedEvent.bookmakers.length > 0) {
+                // Get odds from the first available real-world bookmaker
+                const market = matchedEvent.bookmakers[0].markets[0];
+                const outcome = market.outcomes.find(o => 
+                    selectionName.toLowerCase().includes(o.name.toLowerCase()) ||
+                    o.name.toLowerCase().includes(selectionName.toLowerCase())
+                );
+
+                if (outcome && outcome.price > 1) {
+                    return 1 / outcome.price; // True implied probability
+                }
+            }
+            
+            // Fallback if no exact string match is found
+            return calculateImpliedProbability(tornOdds);
+
+        } catch (e) {
+            console.error("[EV Engine] Failed to fetch external odds:", e);
+            return calculateImpliedProbability(tornOdds);
+        }
     }
 
     // ==============================================================================
